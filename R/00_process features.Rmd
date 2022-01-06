@@ -1,0 +1,324 @@
+---
+title: "Process features"
+author: "*Compiled on `r date()` by `r Sys.info()['user']`*"
+output: 
+  html_document:
+    code_folding: show
+    toc: true
+    toc_depth: 1
+    toc_float: yes
+    number_sections: false
+    theme: cerulean
+    highlight: haddock
+---
+
+```{r}
+library(raster)
+library(sf)
+library(tidyverse)
+
+options(scipen = 999)
+```
+
+```{r}
+emlab_data_dir <- "~/Google Drive/Shared drives/emlab/data"
+
+gocp_project_dir <- "~/Google Drive/Shared drives/emlab/projects/current-projects/ocean-conservation-priorities"
+
+source(file.path(emlab_data_dir, "ocean-conservation-priorities","functions", "food_provision_foos.R"))
+
+land_50_moll <-  sf::st_read(file.path(emlab_data_dir, "ocean-conservation-priorities", "inputs","land_50_moll.gpkg"))
+
+ocean_low_res_moll <- raster::raster(file.path(emlab_data_dir, "ocean-conservation-priorities", "inputs", "ocean_low_res_moll.tif"))
+```
+
+# MPAs
+
+```{r}
+mpatlas <- sf::st_read(file.path(emlab_data_dir, "mpa-atlas", "MPAtlas_20201223_clean", "mpatlas_20201223_clean.shp"))
+
+mpatlas_info <- mpatlas %>% 
+  st_drop_geometry()
+
+mpas_to_include <- c(15907, 14985, 14982, 12864, 9234, 737, 9051, 68813326, 68807894, 68819490, 15624, 68819076, 68818813, 68808197)
+
+mpas_to_exclude <- c(68808626, 68808627)
+
+highly_mpas <- mpatlas %>% 
+  filter(is_mpa == 1,
+         status == "Designated",
+         implemente == 1) %>%
+  filter(!mpa_id %in% mpas_to_exclude) %>% 
+  filter(no_take %in% c("All") | mpa_id %in% mpas_to_include | country == "GAB")
+
+mpas_for_review <- mpatlas %>% 
+  filter(is_mpa == 1,
+         status == "Designated",
+         implemente == 1) %>%
+  filter(!mpa_id %in% mpas_to_exclude) %>% 
+  filter(no_take %in% c("All", "Part") | mpa_id %in% mpas_to_include) %>% 
+  filter(!mpa_id %in% highly_mpas$mpa_id, iucn_categ %in% c("II", "Ia", "Ib")) %>% 
+  arrange(desc(rep_m_area))
+
+highly_mpas <- bind_rows(highly_mpas, mpas_for_review) %>% 
+  st_set_crs(st_crs(mpatlas))
+
+highly_mpas_info <- highly_mpas %>% st_drop_geometry()
+
+highly_mpas_raster <- highly_mpas %>% 
+  st_transform(st_crs(ocean_low_res_moll)) %>% 
+  rasterize(ocean_low_res_moll, getCover = T) %>% 
+  mask(ocean_low_res_moll)
+```
+
+```{r}
+ocean_df <- stack(ocean_low_res_moll, highly_mpas_raster) %>% 
+  raster::as.data.frame(xy = T) %>% 
+  set_names(c("lon", "lat", "ocean", "f_highly_mpa")) %>% 
+  filter(!is.na(ocean)) %>% 
+  rowid_to_column(var = "cell_id") %>% 
+  as_tibble()
+
+current_f_highly_protected <- sum(ocean_df$f_highly_mpa)/nrow(ocean_df)
+```
+
+# Features
+
+## Carbon
+
+```{r, eval = F}
+z_carbon <-  1
+
+carbon_features_info <- tibble(filepath = file.path(gocp_project_dir, 
+                                                    "data", "02_processed", "carbon", "carbon_lr_mean_moll.tif"), w = 1)
+
+carbon_df <- stack(carbon_features_info$filepath) %>%
+  raster::as.data.frame(xy = T) %>%
+  set_names(c("lon", "lat", "carbon")) %>% 
+  inner_join(ocean_df) %>%
+  select(lon, lat, cell_id, carbon) %>%
+  as_tibble()
+```
+
+## Food 
+
+```{r, eval = F}
+stocks <- tibble(filename = list.files(file.path(gocp_project_dir, "data", "02_processed", "stock_distributions"),
+                                       full.names = T),
+                 stockid = str_remove(basename(filename), "\\.tif"))
+
+stocks_df <- stack(stocks$filename) %>%
+  raster::as.data.frame(xy = T) %>%
+  rename("lon" = "x", "lat" = "y") %>% 
+  inner_join(ocean_df %>% 
+               select(lon, lat, cell_id)) %>%
+  select(lon, lat, cell_id, everything()) %>%
+  as_tibble() 
+
+stock_names <- colnames(stocks_df)[-c(1:3)]
+```
+
+```{r}
+stocks_info <- read_rds(file.path(gocp_project_dir,
+                                  "data", "02_processed", "food_provision", "MegaData_Ray.rds")) %>%
+    select(stockid, k = Kfin, ex_rate = ExploitationRate_BAU1_Ray, m = m_fin, r = r_fin)
+
+stocks_info <- stocks %>%
+  left_join(stocks_info)
+
+stocks_info$ex_rate[stocks_info$ex_rate >= 1] <- 0.99999
+
+n_stocks <- nrow(stocks_info)
+```
+
+## Biodiversity
+
+```{r, eval = F}
+z_bio <- 0.25
+
+spp_files <- tibble(filepath = list.files(c(file.path(gocp_project_dir, "data", "02_processed", "species_distributions", "birdlife"),
+                                            file.path(gocp_project_dir, "data", "02_processed", "species_distributions", "aquamaps")),
+                                          full.names = T),
+                    valid_sci_name = str_replace_all(str_remove(basename(filepath), "\\.tif"), "_", " ")) %>% 
+  arrange(valid_sci_name)
+
+smts_info <- tibble(filepath = list.files(file.path(gocp_project_dir, "data", "02_processed","seamounts"), full.names = T)) 
+
+provs_info <- tibble(filepath = list.files(file.path(gocp_project_dir, "data", "02_processed", "biogeography"), full.names = T, pattern = "\\.tif"))
+
+biodiversity_df <- stack(c(spp_files$filepath, smts_info$filepath, provs_info$filepath)) %>%
+  raster::as.data.frame(xy = T)
+
+biodiversity_df <- biodiversity_df %>% 
+  rename("lon" = "x", "lat" = "y") %>% 
+  inner_join(ocean_df %>% 
+               select(lon, lat, cell_id)) %>%
+  select(lon, lat, cell_id, everything()) %>%
+  as_tibble() 
+
+bio_feature_names <- colnames(biodiversity_df)[-c(1:3)]
+```
+
+```{r}
+spp_wts <- data.table::fread(file.path(gocp_project_dir, "data", "02_processed", "species_list", "spp_weights.csv")) %>% 
+  as_tibble() %>% 
+  rename(w = spp_weight)
+
+smts_wts <- tibble(filepath = list.files(file.path(gocp_project_dir, "data", "02_processed","seamounts"), full.names = T)) %>% 
+  mutate(w = sum(spp_wts$w)/n())
+
+provs_wts <- tibble(filepath = list.files(file.path(gocp_project_dir, "data", "02_processed", "biogeography"), full.names = T, pattern = "\\.tif")) %>% 
+  mutate(w = sum(spp_wts$w)/n())
+
+bio_features_info <- bind_rows(spp_wts %>% 
+                                 mutate(sub_goal = "species"), 
+                               smts_wts %>% 
+                                 mutate(sub_goal = "seamounts"), 
+                               provs_wts %>% 
+                                 mutate(sub_goal = "provinces"))
+
+n_bio_features <- nrow(bio_features_info)
+```
+
+## Full features
+
+```{r}
+features_df <- biodiversity_df %>% 
+   left_join(carbon_df) %>% 
+   left_join(stocks_df)
+
+feature_names <- names(features_df)[-c(1:3)]
+```
+
+# Weights
+
+```{r}
+bio_weights <- bio_features_info$w
+
+names(bio_weights) <- bio_feature_names
+
+carbon_weights <- c("carbon" = 1)
+
+n_carbon <- 1
+
+food_weights <- rep(1, n_stocks)
+
+names(food_weights) <- stock_names
+```
+
+# Normalize and apply impacts
+
+```{r}
+features_matrix <- features_df %>% 
+  select(-lon,-lat,-cell_id) %>% 
+  as.matrix()
+
+rownames(features_matrix) <- features_df$cell_id
+
+stopifnot(
+  sum(map_lgl(features_df %>%
+                select(-lon,-lat,-cell_id), is.numeric)) == ncol(features_matrix)
+  ) 
+
+norm_features_matrix <- sweep(features_matrix, 2, colSums(features_matrix, na.rm = T), FUN = "/")
+
+stopifnot(
+  sum(colSums(norm_features_matrix, na.rm = T)) == ncol(features_matrix)
+  ) 
+
+norm_features_matrix <- norm_features_matrix[rowSums(is.na(norm_features_matrix)) != ncol(norm_features_matrix), ]
+
+stopifnot(
+  identical(colnames(norm_features_matrix), 
+          features_df %>% 
+            select(-lon,-lat,-cell_id) %>% 
+            colnames())
+  )  # Is the order of the features mantained?
+
+norm_features_matrix[is.na(norm_features_matrix)] <- 0
+```
+
+## Biodiversity impacts
+
+```{r}
+bio_abatable_impacts_df <- raster(file.path(gocp_project_dir, 
+                                            "data", "02_processed", "impacts", "chi", "abatable_impacts_5_yr_avg_log.tif")) %>% 
+  raster::as.data.frame(xy = T) %>% 
+  set_names(c("lon", "lat", "Ia")) %>% 
+  inner_join(ocean_df) %>% 
+  as_tibble() %>% 
+  replace_na(list(Ia = 0))
+
+bio_unabatable_impacts_df <- raster(file.path(gocp_project_dir, 
+                                              "data", "02_processed", "impacts", "chi", "unabatable_impacts_5_yr_avg_log.tif")) %>% 
+  raster::as.data.frame(xy = T) %>% 
+  set_names(c("lon", "lat", "Iu")) %>% 
+  inner_join(ocean_df) %>% 
+  as_tibble()%>% 
+  replace_na(list(Iu = 0)) 
+
+bio_remains_BAU <- norm_features_matrix[, bio_feature_names] %>% 
+  sweep(1, (1 - bio_abatable_impacts_df$Ia), FUN = "*") %>% 
+  sweep(1, (1 - bio_unabatable_impacts_df$Iu), FUN = "*") %>% 
+  colSums(na.rm = T)
+
+sum(bio_remains_BAU^z_bio*bio_weights)/sum(1^z_bio*bio_weights)
+
+bio_remains_MPA <- norm_features_matrix[, bio_feature_names] %>% 
+  sweep(1, (1 - bio_unabatable_impacts_df$Iu), FUN = "*") %>% 
+  colSums(na.rm = T)
+
+bio_diff_matrix <- norm_features_matrix[, bio_feature_names] %>% 
+  sweep(1, (bio_abatable_impacts_df$Ia - bio_abatable_impacts_df$Ia*bio_unabatable_impacts_df$Iu), FUN = "*")
+
+bio_diff_made <- colSums(bio_diff_matrix, na.rm = T)
+
+norm_features_matrix[, bio_feature_names] <- bio_diff_matrix
+```
+
+## Carbon
+
+```{r}
+carbon_abatable_impacts_df <- raster(file.path(gocp_project_dir, 
+                                              "data", "02_processed", "impacts", "bottom_trawling", "Ia.tif")) %>% 
+  raster::as.data.frame(xy = T) %>% 
+  set_names(c("lon", "lat", "Ia")) %>% 
+  inner_join(ocean_df) %>% 
+  as_tibble() %>% 
+  replace_na(list(Ia = 0)) 
+
+carbon_abatable_impacts_df <- carbon_abatable_impacts_df %>% 
+  mutate(Ia = if_else(Ia == 0, 10^-30, Ia))
+
+carbon_remains_BAU <- norm_features_matrix[, "carbon", drop = F] %>% 
+  sweep(1, (1 - carbon_abatable_impacts_df$Ia), FUN = "*") %>% 
+  colSums(na.rm = T)
+
+carbon_remains_MPA <- norm_features_matrix[, "carbon", drop = F] %>% 
+  sweep(1, (1 - 0), FUN = "*") %>% 
+  colSums(na.rm = T)
+
+carbon_diff_matrix <- norm_features_matrix[, "carbon", drop = F] %>% 
+  sweep(1, (carbon_abatable_impacts_df$Ia), FUN = "*")
+
+carbon_diff_made <- colSums(carbon_diff_matrix, na.rm = T)
+
+norm_features_matrix[, "carbon"] <- carbon_diff_matrix
+
+norm_features_matrix[is.na(norm_features_matrix)] <- 0
+```
+
+# Group ids
+
+```{r}
+group_ids <- c(rep(1, n_bio_features), rep(2, n_carbon), rep(3, n_stocks))
+```
+
+```{r}
+save(features_df, feature_names, ocean_df, highly_mpas_raster, highly_mpas,
+     bio_weights, carbon_weights, food_weights, 
+     bio_feature_names, stock_names, stocks_info, group_ids, 
+     carbon_remains_BAU, bio_remains_BAU, bio_remains_MPA, carbon_remains_MPA, norm_features_matrix,
+     file = file.path(emlab_data_dir, "ocean-conservation-priorities", "inputs","national_analyses","common_inputs.RData"))
+```
+
