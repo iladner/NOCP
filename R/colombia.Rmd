@@ -16,10 +16,29 @@ output:
 library(raster)
 library(sf)
 library(tidyverse)
+library(patchwork)
 
 knitr::opts_chunk$set(echo = F, message = F, warning = F,  prompt = F, comment = F)
 
 options(scipen = 999)
+
+theme_maps <- theme(axis.text.x = element_text(size = 8),
+                    axis.text.y = element_text(size = 8),
+                    axis.ticks = element_blank(),
+                    axis.line = element_blank(),
+                    axis.title.x = element_blank(),
+                    axis.title.y = element_blank(),
+                    legend.text = element_text(size = 8),
+                    legend.text.align = 0,
+                    legend.position = "bottom",
+                    legend.background = element_rect(fill = NA, color = NA),
+                    panel.grid.major = element_line(color = "#ebebe5", size = 0.2),
+                    panel.grid.minor = element_blank(),
+                    panel.background = element_rect(fill = NA, color = NA), 
+                    panel.border = element_blank(),
+                    plot.background = element_rect(fill = NA, color = NA), 
+                    plot.caption = element_text(hjust = 0.7),
+                    plot.title.position = "plot")
 ```
 
 ```{r}
@@ -35,7 +54,7 @@ dir.create(country_name)
 # Load data
 
 ```{r}
-source("01_setup.R")
+source("R/01_setup.R")
 ```
 
 ## EEZ & land
@@ -350,6 +369,14 @@ plot_curve(curve_df = bio_benefit_curve,
 
 
 ```{r}
+max_lat <- 1945067
+max_lon <- -7015095
+min_lat  <- 195067
+min_lon <- -8465095
+bbox_buffer <- 10000
+
+
+
 map_priorities <- function(rank_raster,
                            priority,
                            scenario,
@@ -408,14 +435,12 @@ map_priorities <- function(rank_raster,
     geom_sf(data = mpas_shp,
             inherit.aes = F, fill = "lightblue", col = "transparent") +
     geom_sf(data =  land_shp,
-            inherit.aes = F, fill = "gray", col = "transparent",linetype = 2, size = 0.5)+
+            inherit.aes = F, fill = "wheat", col = "transparent",linetype = 2, size = 0.5)+
     scale_fill_manual(na.value = "black",
                       values  = local_colors,
                       labels = local_labels,
                       guide = guide_legend(title = "Top % of EEZ",
                                            direction = "horizontal",
-                                           keyheight = unit(0.01, "npc"),
-                                           keywidth = unit(rev(local_legend_key_widths$w2), "npc"),
                                            title.position = 'top',
                                            title.hjust = 0.5,
                                            label.hjust = -.02,
@@ -423,9 +448,9 @@ map_priorities <- function(rank_raster,
                                            byrow = T,
                                            reverse = T,
                                            label.position = "bottom"))+
-    labs(title = paste("Conservation Priorities:", priority, sep = " "),
-         subtitle = scenario)+
-    easyR::ggtheme_map()
+    labs(title = priority)+
+    theme_maps+
+    NULL
 
   return(map)
 
@@ -436,14 +461,17 @@ map_priorities <- function(rank_raster,
 bio_raster <- bio_ranking %>% 
   rasterize_ranking() 
 
-map_priorities(rank_raster = bio_raster, 
-               priority = "biodiversity", 
+bio_map <- map_priorities(rank_raster = bio_raster, 
+               priority = "Biodiversity", 
                scenario = country_name,
                projection = local_crs, 
                mpas_shp = highly_mpas,
                land_shp = land_shp) +
-  geom_sf(data = highly_mpas, fill = "transparent", col = "red", inherit.aes = F)+
-  ggsave(filename = file.path(country_name, "bio_map.png"), height = 7, width = 7)
+  geom_sf(data = highly_mpas, fill = "transparent", col = "black", inherit.aes = F)+
+  coord_sf(xlim = c(min_lon,max_lon),ylim = c(min_lat, max_lat))+
+   annotate("rect", xmin = -7836076-bbox_buffer, xmax = -7669382+bbox_buffer, ymin = 1784724-bbox_buffer, ymax = 1989077+bbox_buffer,fill = "transparent", col = "red",linetype = 2, size = 1)+
+    annotate("rect", xmin = -7784071-bbox_buffer, xmax = -7715646+bbox_buffer, ymin = 670836-bbox_buffer, ymax = 893188+bbox_buffer,fill = "transparent", col = "red",linetype = 2, size = 1)
+
 ```
 
 
@@ -482,14 +510,16 @@ plot_curve(curve_df = carbon_benefit_curve, goal = "carbon", country_name = coun
 carbon_raster <- carbon_ranking %>% 
   rasterize_ranking() 
 
-map_priorities(rank_raster = carbon_raster, 
-               priority = "carbon", 
+carbon_map <- map_priorities(rank_raster = carbon_raster, 
+               priority = "Carbon", 
                scenario = country_name,
-               projection = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs ", 
+               projection = local_crs, 
                mpas_shp = highly_mpas,
                land_shp = land_shp) +
-    geom_sf(data = highly_mpas, fill = "transparent", col = "red", inherit.aes = F)+
-  ggsave(filename = file.path(country_name, "carbon_map.png"), height = 7, width = 7)
+  geom_sf(data = highly_mpas, fill = "transparent", col = "black", inherit.aes = F)+
+  coord_sf(xlim = c(min_lon,max_lon),ylim = c(min_lat, max_lat))+
+   annotate("rect", xmin = -7836076-bbox_buffer, xmax = -7669382+bbox_buffer, ymin = 1784724-bbox_buffer, ymax = 1989077+bbox_buffer,fill = "transparent", col = "red",linetype = 2, size = 1)+
+    annotate("rect", xmin = -7784071-bbox_buffer, xmax = -7715646+bbox_buffer, ymin = 670836-bbox_buffer, ymax = 893188+bbox_buffer,fill = "transparent", col = "red",linetype = 2, size = 1)
 ```
 
 ```{r}
@@ -533,16 +563,16 @@ plot_curve(curve_df = food_benefit_curve, goal = "food", country_name = country_
 food_raster <- food_ranking %>% 
   rasterize_ranking() 
 
-plot(food_raster)
-  
-map_priorities(rank_raster = food_raster, 
-               priority = "food", 
-               scenario = "mixed model",
+food_map <- map_priorities(rank_raster = food_raster, 
+               priority = "Food", 
+               scenario = country_name,
                projection = local_crs, 
                mpas_shp = highly_mpas,
                land_shp = land_shp) +
-  geom_sf(data = highly_mpas, fill = "transparent", col = "red", inherit.aes = F)
-  ggsave(filename = file.path(country_name, "food_map.png"), height = 7, width = 7)
+  geom_sf(data = highly_mpas, fill = "transparent", col = "black", inherit.aes = F)+
+  coord_sf(xlim = c(min_lon,max_lon),ylim = c(min_lat, max_lat))+
+   annotate("rect", xmin = -7836076-bbox_buffer, xmax = -7669382+bbox_buffer, ymin = 1784724-bbox_buffer, ymax = 1989077+bbox_buffer,fill = "transparent", col = "red",linetype = 2, size = 1)+
+    annotate("rect", xmin = -7784071-bbox_buffer, xmax = -7715646+bbox_buffer, ymin = 670836-bbox_buffer, ymax = 893188+bbox_buffer,fill = "transparent", col = "red",linetype = 2, size = 1)
 ```
 
 ```{r}
@@ -563,6 +593,18 @@ bind_rows(food_summary,
           bio_summary) %>% 
   write_csv(file.path(country_name, "summary_results.csv"))
 ```
+
+# Final output map for report
+```{r}
+
+bio_map+carbon_map+food_map+guide_area()+plot_layout(guides = "collect")
+
+#ggsave(file.path(fig_path, "overlap.png"))
+
+
+```
+
+
 
 # Triple wins
 

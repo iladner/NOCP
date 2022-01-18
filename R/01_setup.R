@@ -1,6 +1,6 @@
-emlab_data_dir <- "~/juanmayorga@ucsb.edu - Google Drive/Shared drives/emlab/data"
+emlab_data_dir <- "G:/Shared drives/emlab/data"
 
-gocp_project_dir <- "~/juanmayorga@ucsb.edu - Google Drive/Shared drives/emlab/projects/current-projects/ocean-conservation-priorities"
+gocp_project_dir <- "G:/Shared drives/emlab/projects/current-projects/ocean-conservation-priorities"
 
 source(file.path(emlab_data_dir, "ocean-conservation-priorities","functions", "food_provision_foos.R"))
 
